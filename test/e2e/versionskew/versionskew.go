@@ -37,13 +37,12 @@ import (
 
 const (
 	// base is the release branch used for version skew testing. Empty if none.
-	base = "0.9"
+	base = "1.0"
 )
 
 func baseSupportsKubernetes(ver version.Version) bool {
 	switch ver {
-	case version.NewVersion(1, 21):
-		return false
+	// No exceptions at the moment.
 	default:
 		return true
 	}
@@ -266,6 +265,10 @@ func (p *skewTestSuite) DefineTests(driver storageframework.TestDriver, pattern 
 	// and if there compatibility issues, then hopefully the direction
 	// of the skew won't matter.
 	It("controller [Slow]", func() {
+		if d.HasOperator {
+			skipper.Skipf("cannot change image of the PMEM-CSI controller because it is managed by the operator")
+		}
+
 		withKataContainers := false
 		c, err := deploy.NewCluster(f.ClientSet, f.DynamicClient, f.ClientConfig())
 		framework.ExpectNoError(err, "new cluster")

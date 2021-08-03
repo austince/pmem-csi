@@ -39,6 +39,7 @@ import (
 	api "github.com/intel/pmem-csi/pkg/apis/pmemcsi/v1beta1"
 	pmemexec "github.com/intel/pmem-csi/pkg/exec"
 	pmemlog "github.com/intel/pmem-csi/pkg/logger"
+	"github.com/intel/pmem-csi/pkg/version"
 	"github.com/intel/pmem-csi/test/e2e/pod"
 	testconfig "github.com/intel/pmem-csi/test/test-config"
 
@@ -779,6 +780,21 @@ type Deployment struct {
 	Version string
 }
 
+func (d Deployment) ParseVersion() version.Version {
+	if d.Version == "" {
+		// Not specified explicitly, i.e. the current version.
+		// We assume that this is more recent than any explicitly
+		// specified version and return a fake version number
+		// that is higher than anything we expect PMEM-CSI to reach.
+		return version.NewVersion(100, 0)
+	}
+	ver, err := version.Parse(d.Version)
+	if err != nil {
+		panic(err)
+	}
+	return ver
+}
+
 func (d Deployment) DeploymentMode() string {
 	if d.Testing {
 		return "testing"
@@ -990,6 +1006,8 @@ var allDeployments = []string{
 	// and *no* controller.
 	"operator-direct-production",
 	"olm", // operator installed by OLM
+	"olm-lvm-production",
+	"olm-direct-production",
 }
 var deploymentRE = regexp.MustCompile(`^(operator|olm)?-?(\w*)?-?(testing|production)?-?([0-9\.]*)$`)
 
@@ -1023,19 +1041,14 @@ func Parse(deploymentName string) (*Deployment, error) {
 	}
 	deployment.Version = matches[4]
 
-	if deployment.HasOperator {
-		if !deployment.HasDriver && !deployment.HasOLM { // "operator"
-			// Run the operator tests in a dedicated namespace
-			// to cover the non-default namespace usecase
-			deployment.Namespace = "operator-test"
-		}
-		if deployment.HasDriver && !deployment.Testing {
-			if deployment.Mode == api.DeviceModeDirect { // operator-direct-production
-				deployment.Namespace = "kube-system"
-			} else { // operator-lvm-production
-				deployment.DriverName = "second.pmem-csi.intel.com"
-			}
-		}
+	// Introduce some variation in how we deploy.
+	switch {
+	case deploymentName == "operator":
+		deployment.Namespace = "operator-test"
+	case strings.HasPrefix(deploymentName, "operator-direct-production"):
+		deployment.Namespace = "kube-system"
+	case strings.HasPrefix(deploymentName, "operator-lvm-production"):
+		deployment.DriverName = "second.pmem-csi.intel.com"
 	}
 
 	return deployment, nil
@@ -1126,12 +1139,15 @@ func EnsureDeploymentNow(f *framework.Framework, deployment *Deployment) {
 			running.Name(), running.Namespace,
 			deployment.Name(), deployment.Namespace)
 
-		// If both running and wanted operator deployments are managed by
-		// OLM, then we do nothing. The ./test/start-operato-sh -olm script
-		// supposed to handle the case, in other words the OLM should treat
-		// this as operator upgrade.
-		if !(running.HasOLM && deployment.HasOLM) {
-			if running.HasOperator {
+		if running.HasOperator {
+			// If both running and wanted operator deployments are managed by
+			// OLM, then we do nothing for upgrades.
+			// The ./test/start-operator.sh -olm script
+			// is supposed to handle the case, in other words the OLM should treat
+			// this as operator upgrade.
+			// Downgrades are not supported. We have to delete the operator first.
+			bothOLM := running.HasOLM && deployment.HasOLM
+			if !bothOLM || deployment.ParseVersion().CompareVersion(running.ParseVersion()) < 0 {
 				err := StopOperator(running)
 				framework.ExpectNoError(err, "delete operator deployment: %q", deployment.Name())
 			}
@@ -1387,7 +1403,7 @@ func LookupCSIAddresses(ctx context.Context, c *Cluster, namespace string) (node
 // each test will then be invoked for each supported PMEM-CSI deployment
 // which has a functional PMEM-CSI driver.
 func DescribeForAll(what string, f func(d *Deployment)) bool {
-	DescribeForSome(what, RunAllTests, f)
+	DescribeForSome(what, HasDriver, f)
 	return true
 }
 
