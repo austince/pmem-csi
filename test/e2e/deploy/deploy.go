@@ -24,6 +24,7 @@ import (
 	cm "github.com/prometheus/client_model/go"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -924,10 +925,32 @@ func findOperator(c *Cluster) (*Deployment, error) {
 		return nil, err
 	}
 
-	if len(list.Items) == 0 {
+	isValid := func(replicaset appsv1.ReplicaSet) bool {
+		// We can ignore the operator. It gets the deployment label of the
+		// first deployment that needs it, but isn't really specific to it
+		// and gets reused when switching between, say, direct and LVM mode.
+		if replicaset.Labels["app"] == "pmem-csi-operator" {
+			return false
+		}
+		// We can ignore replicasets which don't have any pods. Those
+		// continue to exist with the new (?) apps.Deployment as owner.
+		if *replicaset.Spec.Replicas == 0 && replicaset.Status.Replicas == 0 {
+			return false
+		}
+		return true
+	}
+
+	// Find one ReplicaSet that actually belongs to an active PMEM-CSI deployment.
+	name := ""
+	for _, item := range list.Items {
+		if isValid(item) {
+			name = item.Labels[deploymentLabel]
+			break
+		}
+	}
+	if name == "" {
 		return nil, nil
 	}
-	name := list.Items[0].Labels[deploymentLabel]
 	deployment, err := Parse(name)
 	if err != nil {
 		return nil, fmt.Errorf("parse label of deployment %s: %v", list.Items[0].Name, err)
@@ -947,7 +970,7 @@ func findOperator(c *Cluster) (*Deployment, error) {
 	// Currently we don't support parallel installations, so all
 	// objects must belong to each other.
 	for _, item := range list.Items {
-		if item.Labels[deploymentLabel] != name {
+		if isValid(item) && item.Labels[deploymentLabel] != name {
 			return nil, fmt.Errorf("found at least two different deployments: %s and %s", item.Labels[deploymentLabel], name)
 		}
 	}
