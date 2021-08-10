@@ -932,6 +932,23 @@ func findDriver(c *Cluster) (*Deployment, error) {
 }
 
 func findOperator(c *Cluster) (*Deployment, error) {
+	// We have to try multiple times because the Deployment
+	// controller might still be working on the ReplicaSets that
+	// findOperatorOnce is based on.
+	for i := 0; ; i++ {
+		deployment, err := findOperatorOnce(c)
+		if err == nil {
+			return deployment, nil
+		}
+		if i > 6 {
+			return nil, err
+		}
+		framework.Logf("finding operator failed during attempt #%d, will retry: %v", err)
+		time.Sleep(10 * time.Second)
+	}
+}
+
+func findOperatorOnce(c *Cluster) (*Deployment, error) {
 	// In case of operator deployed by OLM the labels on the Deployment object
 	// get overwritten by OLM reconcile loop.
 	// But the ReplicaSet underneath holds the labels we set on Deployment.
@@ -957,17 +974,17 @@ func findOperator(c *Cluster) (*Deployment, error) {
 	}
 
 	// Find one ReplicaSet that actually belongs to an active PMEM-CSI deployment.
-	name := ""
+	var activeReplicaSet *appsv1.ReplicaSet
 	for _, item := range list.Items {
 		if isValid(item) {
-			name = item.Labels[deploymentLabel]
+			activeReplicaSet = &item
 			break
 		}
 	}
-	if name == "" {
+	if activeReplicaSet == nil {
 		return nil, nil
 	}
-	deployment, err := Parse(name)
+	deployment, err := Parse(activeReplicaSet.Labels[deploymentLabel])
 	if err != nil {
 		return nil, fmt.Errorf("parse label of deployment %s: %v", list.Items[0].Name, err)
 	}
@@ -986,8 +1003,11 @@ func findOperator(c *Cluster) (*Deployment, error) {
 	// Currently we don't support parallel installations, so all
 	// objects must belong to each other.
 	for _, item := range list.Items {
-		if isValid(item) && item.Labels[deploymentLabel] != name {
-			return nil, fmt.Errorf("found at least two different deployments: %s and %s", item.Labels[deploymentLabel], name)
+		if isValid(item) && item.Labels[deploymentLabel] != activeReplicaSet.Labels[deploymentLabel] {
+			return nil, fmt.Errorf("found at least two different deployments: %s and %s\n%+v\n%+v",
+				item.Labels[deploymentLabel], activeReplicaSet.Labels[deploymentLabel],
+				item, activeReplicaSet,
+			)
 		}
 	}
 
