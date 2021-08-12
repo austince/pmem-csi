@@ -845,7 +845,7 @@ func FindDeployment(c *Cluster) (*Deployment, error) {
 		return nil, err
 	}
 	if operator != nil && driver != nil && operator.Name() != driver.Name() && !strings.HasPrefix(driver.Name(), operator.Name()) {
-		return nil, fmt.Errorf("found two different deployments: %s and %s", operator.Name(), driver.Name())
+		return nil, fmt.Errorf("found two different deployments: operator %s and driver %s", operator.Name(), driver.Name())
 	}
 	// findDriver is able to discover some additional information, so return that result
 	// if we have both.
@@ -984,14 +984,14 @@ func findOperatorOnce(c *Cluster) (*Deployment, error) {
 	}
 	deployment, err := Parse(activeReplicaSet.Labels[deploymentLabel])
 	if err != nil {
-		return nil, fmt.Errorf("parse label of deployment %s: %v", list.Items[0].Name, err)
+		return nil, fmt.Errorf("parse label of deployment %s: %v", activeReplicaSet.Name, err)
 	}
-	deployment.Namespace = list.Items[0].Namespace
+	deployment.Namespace = activeReplicaSet.Namespace
 
 	// Derive the version from the image tag. The annotation doesn't include it.
 	// If the version matches what we are currently testing, then we skip
 	// the version (i.e. "current version" == "no explicit version").
-	for _, container := range list.Items[0].Spec.Template.Spec.Containers {
+	for _, container := range activeReplicaSet.Spec.Template.Spec.Containers {
 		if v, found := versionFromContainerImage(container.Image); found {
 			deployment.Version = v
 			break
