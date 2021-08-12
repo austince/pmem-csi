@@ -79,7 +79,7 @@ var _ = deploy.DescribeForAll("Deployment", func(d *deploy.Deployment) {
 			metricsURL, err := deploy.GetOperatorMetricsURL(ctx, c, d)
 			Expect(err).ShouldNot(HaveOccurred(), "get operator metrics URL")
 
-			_, err = validate.DriverDeploymentEventually(ctx, c, client, *k8sver, metricsURL, d.Namespace, deployment, nil, 0)
+			_, err = validate.DriverDeploymentEventually(ctx, c, client, *k8sver, metricsURL, d.Namespace, deployment, 0)
 			framework.ExpectNoError(err, "validate driver")
 		}
 	})
