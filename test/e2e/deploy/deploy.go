@@ -844,7 +844,7 @@ func FindDeployment(c *Cluster) (*Deployment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if operator != nil && driver != nil && operator.Name() != driver.Name() {
+	if operator != nil && driver != nil && operator.Name() != driver.Name() && !strings.HasPrefix(driver.Name(), operator.Name()) {
 		return nil, fmt.Errorf("found two different deployments: %s and %s", operator.Name(), driver.Name())
 	}
 	// findDriver is able to discover some additional information, so return that result
@@ -959,10 +959,8 @@ func findOperatorOnce(c *Cluster) (*Deployment, error) {
 	}
 
 	isValid := func(replicaset appsv1.ReplicaSet) bool {
-		// We can ignore the operator. It gets the deployment label of the
-		// first deployment that needs it, but isn't really specific to it
-		// and gets reused when switching between, say, direct and LVM mode.
-		if replicaset.Labels["app"] == "pmem-csi-operator" {
+		// We can ignore the ReplicaSets of the driver.
+		if replicaset.Labels["app"] != "pmem-csi-operator" {
 			return false
 		}
 		// We can ignore replicasets which don't have any pods. Those
@@ -973,7 +971,7 @@ func findOperatorOnce(c *Cluster) (*Deployment, error) {
 		return true
 	}
 
-	// Find one ReplicaSet that actually belongs to an active PMEM-CSI deployment.
+	// Find one ReplicaSet that actually belongs to an active PMEM-CSI operator.
 	var activeReplicaSet *appsv1.ReplicaSet
 	for _, item := range list.Items {
 		if isValid(item) {
