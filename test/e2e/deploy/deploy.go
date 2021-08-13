@@ -1136,6 +1136,9 @@ func EnsureDeployment(deploymentName string) *Deployment {
 func EnsureDeploymentNow(f *framework.Framework, deployment *Deployment) {
 	ctx, _ := pmemlog.WithName(context.Background(), "EnsureDeployment")
 	c, err := NewCluster(f.ClientSet, f.DynamicClient, f.ClientConfig())
+	root := os.Getenv("REPO_ROOT")
+	env := os.Environ()
+
 	framework.ExpectNoError(err, "get cluster information")
 	running, err := FindDeployment(c)
 	framework.ExpectNoError(err, "check for PMEM-CSI components")
@@ -1167,25 +1170,31 @@ func EnsureDeploymentNow(f *framework.Framework, deployment *Deployment) {
 			bothOLM := running.HasOLM && deployment.HasOLM
 			if !bothOLM || deployment.ParseVersion().CompareVersion(running.ParseVersion()) < 0 {
 				err := StopOperator(running)
-				framework.ExpectNoError(err, "delete operator deployment: %q", deployment.Name())
+				framework.ExpectNoError(err, "delete operator deployment: %s -> %s", running.Name(), deployment.Name())
 			}
 		}
 
-		if !running.HasOLM {
+		// Remove driver if not needed anymore or different.
+		if !running.HasOLM || running.HasDriver && !deployment.HasDriver || running.Mode != deployment.Mode {
 			err := RemoveObjects(c, running)
-			framework.ExpectNoError(err, "remove PMEM-CSI deployment")
+			framework.ExpectNoError(err, "remove PMEM-CSI deployment: %s -> %s", running.Name(), deployment.Name())
+		}
+
+		if running.HasOLM && !deployment.HasOLM {
+			cmd := exec.Command("test/start-stop-olm.sh", "stop")
+			cmd.Dir = root
+			cmd.Env = env
+			_, err := pmemexec.Run(ctx, cmd)
+			framework.ExpectNoError(err, "stop OLM: %s -> %s", running.Name(), deployment.Name())
 		}
 	}
-
-	root := os.Getenv("REPO_ROOT")
-	env := os.Environ()
 
 	if deployment.HasOLM {
 		cmd := exec.Command("test/start-stop-olm.sh", "start")
 		cmd.Dir = root
 		cmd.Env = env
 		_, err := pmemexec.Run(ctx, cmd)
-		framework.ExpectNoError(err, "create operator deployment: %q", deployment.Name())
+		framework.ExpectNoError(err, "start OLM: %q", deployment.Name())
 	}
 
 	if deployment.Version != "" {
